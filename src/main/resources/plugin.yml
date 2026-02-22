@@ -1,0 +1,10 @@
+name: graftingV1
+version: '${project.version}'
+main: me.IkeaBird132.grafting.GraftingV1
+api-version: '1.21'
+authors: [ IkeaBird132 ]
+
+commands:
+  grafting-book:
+    description: Gives the Grafting Grimoire
+    usage: /grafting-book
