@@ -29,9 +29,7 @@ public class LifeLinkHandler implements Listener {
     private static final Map<UUID, UUID> firstSelection = new HashMap<>();
     private static final Map<UUID, UUID> activeLinks    = new HashMap<>();
 
-    // -------------------------------------------------------------------------
     // RMB on entity — select for linking
-    // -------------------------------------------------------------------------
     @EventHandler
     public void onRightClickEntity(PlayerInteractEntityEvent event) {
 
@@ -84,7 +82,7 @@ public class LifeLinkHandler implements Listener {
             player.sendMessage(Component.text("Establishing link in 2 seconds...")
                     .color(NamedTextColor.YELLOW).decoration(TextDecoration.ITALIC, false));
 
-            // Capture target as effectively final for the lambda
+            // Capture target for the lambda, unsure if works atm as lifelink kinda dead TO BE FIXED
             LivingEntity second = target;
             new BukkitRunnable() {
                 @Override
@@ -100,9 +98,9 @@ public class LifeLinkHandler implements Listener {
         }
     }
 
-    // -------------------------------------------------------------------------
+
     // Ctrl+RMB (sneak + right-click) — cancel, return to Stage A
-    // -------------------------------------------------------------------------
+
     @EventHandler
     public void onRightClick(PlayerInteractEvent event) {
 
@@ -122,9 +120,8 @@ public class LifeLinkHandler implements Listener {
         MenuHandler.openMenu(player);
     }
 
-    // -------------------------------------------------------------------------
+
     // Cancel all damage while in Life Link mode
-    // -------------------------------------------------------------------------
     @EventHandler
     public void onEntityAttack(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof Player player)) return;
@@ -132,9 +129,7 @@ public class LifeLinkHandler implements Listener {
         event.setCancelled(true);
     }
 
-    // -------------------------------------------------------------------------
-    // Link logic
-    // -------------------------------------------------------------------------
+    // Link logic, Doesn't work atm TO BE FIXED
     private void establishLink(Player initiator, LivingEntity e1, LivingEntity e2) {
 
         activeLinks.put(e1.getUniqueId(), e2.getUniqueId());
@@ -156,6 +151,7 @@ public class LifeLinkHandler implements Listener {
         }.runTaskLater(GraftingV1.getInstance(), 20L * 180L);
     }
 
+    // Doesn't work atm TO BE FIXED
     private void playLinkParticles(LivingEntity e1, LivingEntity e2) {
         new BukkitRunnable() {
             int ticks = 0;
@@ -174,6 +170,7 @@ public class LifeLinkHandler implements Listener {
         }.runTaskTimer(GraftingV1.getInstance(), 0L, 5L);
     }
 
+    // Doesn't work atm TO BE FIXED
     private void drawLine(Location start, Location end) {
         double distance = start.distance(end);
         if (distance == 0) return;
@@ -184,6 +181,7 @@ public class LifeLinkHandler implements Listener {
         }
     }
 
+    // Doesn't work atm TO BE FIXED
     private LivingEntity findLivingEntity(UUID uuid) {
         var entity = GraftingV1.getInstance().getServer().getEntity(uuid);
         return entity instanceof LivingEntity living ? living : null;

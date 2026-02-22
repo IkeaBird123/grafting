@@ -66,9 +66,7 @@ public class LocationGraftHandler implements Listener {
         player.openInventory(inv);
     }
 
-    // -------------------------------------------------------------------------
     // Inventory clicks
-    // -------------------------------------------------------------------------
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
 
