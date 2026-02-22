@@ -1,13 +1,22 @@
 package me.IkeaBird132.grafting.handler;
 
 import me.IkeaBird132.grafting.GraftingV1;
-import org.bukkit.*;
-import org.bukkit.entity.Entity;
+import me.IkeaBird132.grafting.manager.GraftMode;
+import me.IkeaBird132.grafting.manager.ModeManager;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Location;
+import org.bukkit.Particle;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
@@ -17,148 +26,169 @@ import java.util.UUID;
 
 public class LifeLinkHandler implements Listener {
 
-    // First entity selection per player
-    private static final Map<Player, LivingEntity> firstSelection = new HashMap<>();
+    private static final Map<UUID, UUID> firstSelection = new HashMap<>();
+    private static final Map<UUID, UUID> activeLinks    = new HashMap<>();
 
-    // Active links (entity UUID -> linked entity UUID)
-    private static final Map<UUID, UUID> activeLinks = new HashMap<>();
-
-    /*
-     * Called when player selects Life Link mode
-     */
-    public static void enableSelection(Player player) {
-        player.sendMessage(ChatColor.GRAY + "Select first entity.");
-        firstSelection.put(player, null);
-    }
-
-    /*
-     * Detect entity right-click
-     */
+    // -------------------------------------------------------------------------
+    // RMB on entity — select for linking
+    // -------------------------------------------------------------------------
     @EventHandler
-    public void onEntityClick(PlayerInteractEntityEvent event) {
+    public void onRightClickEntity(PlayerInteractEntityEvent event) {
+
+        if (event.getHand() != EquipmentSlot.HAND) return;
 
         Player player = event.getPlayer();
-        Entity clicked = event.getRightClicked();
+        if (ModeManager.getMode(player.getUniqueId()) != GraftMode.LIFE_LINK) return;
+        if (player.isSneaking()) return; // Ctrl+RMB = cancel, handled below
 
-        // Only proceed if player is in selection mode
-        if (!firstSelection.containsKey(player)) return;
+        if (!(event.getRightClicked() instanceof LivingEntity target)) {
+            player.sendMessage(Component.text("You can only link living entities.")
+                    .color(NamedTextColor.RED).decoration(TextDecoration.ITALIC, false));
+            return;
+        }
 
-        // Only allow living entities
-        if (!(clicked instanceof LivingEntity living)) {
-            player.sendMessage(ChatColor.RED + "You can only link living entities.");
+        if (target.getUniqueId().equals(player.getUniqueId())) {
+            player.sendMessage(Component.text("You cannot link yourself.")
+                    .color(NamedTextColor.RED).decoration(TextDecoration.ITALIC, false));
             return;
         }
 
         event.setCancelled(true);
 
-        // First selection
-        if (firstSelection.get(player) == null) {
-            firstSelection.put(player, living);
-            player.sendMessage(ChatColor.GREEN + living.getName() + " has been selected.");
-            player.sendMessage(ChatColor.GRAY + "Select second entity.");
-            return;
-        }
+        UUID playerUUID = player.getUniqueId();
 
-        LivingEntity first = firstSelection.get(player);
+        if (!firstSelection.containsKey(playerUUID)) {
+            firstSelection.put(playerUUID, target.getUniqueId());
+            player.sendMessage(Component.text(target.getName() + " has been chosen. Right-click the second entity.")
+                    .color(NamedTextColor.GREEN).decoration(TextDecoration.ITALIC, false));
+        } else {
+            UUID firstUUID = firstSelection.get(playerUUID);
 
-        // Prevent linking same entity
-        if (first.getUniqueId().equals(living.getUniqueId())) {
-            player.sendMessage(ChatColor.RED + "You cannot link an entity to itself.");
-            return;
-        }
-
-        player.sendMessage(ChatColor.GREEN + living.getName() + " has been selected.");
-        player.sendMessage(ChatColor.YELLOW + "Establishing Life Link...");
-
-        // 2 second delay before establishing link
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                establishLink(first, living);
-                player.sendMessage(ChatColor.GREEN + "Life link established.");
+            if (firstUUID.equals(target.getUniqueId())) {
+                player.sendMessage(Component.text("You cannot link an entity to itself.")
+                        .color(NamedTextColor.RED).decoration(TextDecoration.ITALIC, false));
+                return;
             }
-        }.runTaskLater(GraftingV1.getInstance(), 40);
 
-        firstSelection.remove(player);
+            LivingEntity first = findLivingEntity(firstUUID);
+            if (first == null) {
+                player.sendMessage(Component.text("First entity is no longer valid. Selection reset.")
+                        .color(NamedTextColor.RED).decoration(TextDecoration.ITALIC, false));
+                firstSelection.remove(playerUUID);
+                return;
+            }
+
+            firstSelection.remove(playerUUID);
+            player.sendMessage(Component.text(target.getName() + " has been chosen.")
+                    .color(NamedTextColor.GREEN).decoration(TextDecoration.ITALIC, false));
+            player.sendMessage(Component.text("Establishing link in 2 seconds...")
+                    .color(NamedTextColor.YELLOW).decoration(TextDecoration.ITALIC, false));
+
+            // Capture target as effectively final for the lambda
+            LivingEntity second = target;
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (first.isDead() || second.isDead()) {
+                        player.sendMessage(Component.text("Link failed — an entity died before it could establish.")
+                                .color(NamedTextColor.RED).decoration(TextDecoration.ITALIC, false));
+                        return;
+                    }
+                    establishLink(player, first, second);
+                }
+            }.runTaskLater(GraftingV1.getInstance(), 40L);
+        }
     }
 
-    /*
-     * Establish the link
-     */
-    private static void establishLink(LivingEntity e1, LivingEntity e2) {
+    // -------------------------------------------------------------------------
+    // Ctrl+RMB (sneak + right-click) — cancel, return to Stage A
+    // -------------------------------------------------------------------------
+    @EventHandler
+    public void onRightClick(PlayerInteractEvent event) {
+
+        Player player = event.getPlayer();
+        if (ModeManager.getMode(player.getUniqueId()) != GraftMode.LIFE_LINK) return;
+        if (event.getHand() != EquipmentSlot.HAND) return;
+
+        Action action = event.getAction();
+        if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) return;
+        if (!player.isSneaking()) return;
+
+        event.setCancelled(true);
+        firstSelection.remove(player.getUniqueId());
+        ModeManager.setMode(player.getUniqueId(), GraftMode.NONE);
+        player.sendMessage(Component.text("Life Link cancelled.")
+                .color(NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false));
+        MenuHandler.openMenu(player);
+    }
+
+    // -------------------------------------------------------------------------
+    // Cancel all damage while in Life Link mode
+    // -------------------------------------------------------------------------
+    @EventHandler
+    public void onEntityAttack(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Player player)) return;
+        if (ModeManager.getMode(player.getUniqueId()) != GraftMode.LIFE_LINK) return;
+        event.setCancelled(true);
+    }
+
+    // -------------------------------------------------------------------------
+    // Link logic
+    // -------------------------------------------------------------------------
+    private void establishLink(Player initiator, LivingEntity e1, LivingEntity e2) {
 
         activeLinks.put(e1.getUniqueId(), e2.getUniqueId());
         activeLinks.put(e2.getUniqueId(), e1.getUniqueId());
 
-        playParticles(e1, e2);
+        initiator.sendMessage(Component.text("Life Link established between " + e1.getName() + " and " + e2.getName() + "!")
+                .color(NamedTextColor.GREEN).decoration(TextDecoration.ITALIC, false));
 
-        // Remove after 3 minutes (180 seconds)
+        playLinkParticles(e1, e2);
+
         new BukkitRunnable() {
             @Override
             public void run() {
                 activeLinks.remove(e1.getUniqueId());
                 activeLinks.remove(e2.getUniqueId());
-
-                if (!e1.isDead())
-                    e1.sendMessage(ChatColor.GRAY + "Life Link faded.");
-                if (!e2.isDead())
-                    e2.sendMessage(ChatColor.GRAY + "Life Link faded.");
+                initiator.sendMessage(Component.text("Life Link between " + e1.getName() + " and " + e2.getName() + " has faded.")
+                        .color(NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false));
             }
-        }.runTaskLater(GraftingV1.getInstance(), 20 * 180);
+        }.runTaskLater(GraftingV1.getInstance(), 20L * 180L);
     }
 
-    /*
-     * Particle visuals
-     */
-    private static void playParticles(LivingEntity e1, LivingEntity e2) {
-
+    private void playLinkParticles(LivingEntity e1, LivingEntity e2) {
         new BukkitRunnable() {
-
             int ticks = 0;
 
             @Override
             public void run() {
-
-                if (ticks > 60) { // lasts a few seconds
+                if (ticks > 60 || e1.isDead() || e2.isDead()) {
                     cancel();
                     return;
                 }
-
-                if (e1.isDead() || e2.isDead()) {
-                    cancel();
-                    return;
-                }
-
-                // Firework circle effect
-                e1.getWorld().spawnParticle(Particle.FIREWORK, e1.getLocation(), 15);
-                e2.getWorld().spawnParticle(Particle.FIREWORK, e2.getLocation(), 15);
-
-                // Green connecting line
+                e1.getWorld().spawnParticle(Particle.FIREWORK, e1.getLocation(), 10);
+                e2.getWorld().spawnParticle(Particle.FIREWORK, e2.getLocation(), 10);
                 drawLine(e1.getLocation(), e2.getLocation());
-
                 ticks++;
             }
-
-        }.runTaskTimer(GraftingV1.getInstance(), 0, 5);
+        }.runTaskTimer(GraftingV1.getInstance(), 0L, 5L);
     }
 
-    /*
-     * Draw particle line between entities
-     */
-    private static void drawLine(Location start, Location end) {
-
+    private void drawLine(Location start, Location end) {
         double distance = start.distance(end);
-        Vector vector = end.toVector().subtract(start.toVector()).normalize();
-
-        for (double i = 0; i < distance; i += 0.5) {
-            Location point = start.clone().add(vector.clone().multiply(i));
+        if (distance == 0) return;
+        Vector direction = end.toVector().subtract(start.toVector()).normalize();
+        for (double d = 0; d < distance; d += 0.5) {
+            Location point = start.clone().add(direction.clone().multiply(d));
             start.getWorld().spawnParticle(Particle.DRAGON_BREATH, point, 1);
         }
     }
 
-    /*
-     * Used by Death Listener
-     */
+    private LivingEntity findLivingEntity(UUID uuid) {
+        var entity = GraftingV1.getInstance().getServer().getEntity(uuid);
+        return entity instanceof LivingEntity living ? living : null;
+    }
+
     public static UUID getLinked(UUID uuid) {
         return activeLinks.get(uuid);
     }
